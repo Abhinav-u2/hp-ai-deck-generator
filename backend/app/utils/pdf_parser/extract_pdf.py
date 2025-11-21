@@ -16,7 +16,7 @@ load_dotenv()
 # -------------------------------------------------
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-input_folder = r"C:\Users\Prajakta.Satav\Downloads\team2\MMIS\data\ppt\2024"
+input_folder = r"C:\Users\vikas.singh1\Desktop\hp-ai-deck-generator\data\raw\hp catalogue.pdf"
 output_base = "output"
 os.makedirs(output_base, exist_ok=True)
 
@@ -204,7 +204,7 @@ def process_pdf(pdf_path):
 # MAIN: Process a single PDF
 # -------------------------------------------------
 if __name__ == "__main__":
-    pdf_path = r"C:\Users\abhinav.pandey\Desktop\ai-product-deck-generator\ai-product-deck-generator\data\raw\hp catalogue.pdf"
+    pdf_path = r"C:\Users\vikas.singh1\Desktop\hp-ai-deck-generator\data\raw\hp catalogue.pdf"
 
     if not os.path.exists(pdf_path):
         print(f"❌ File not found: {pdf_path}")

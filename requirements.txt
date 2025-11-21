@@ -1,4 +1,7 @@
 pydantic
+pymupdf
+pillow
+google-genai
 langchain-openai
 langgraph
 openai
