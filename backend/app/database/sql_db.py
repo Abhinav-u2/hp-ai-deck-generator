@@ -5,8 +5,8 @@ import os
 # ================================
 # CONFIG — set your paths here
 # ================================
-JSON_PATH = r"C:\Users\vikas.singh1\Desktop\hp-ai-deck-generator\output\hp catalogue\hp catalogue_output.json"
-DB_PATH   = r"C:\Users\vikas.singh1\Desktop\hp-ai-deck-generator\backend\app\database\products.db"
+JSON_PATH = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\output\hp catalogue\hp catalogue_output.json"
+DB_PATH   = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\backend\app\database\products.db"
 KEY_FIELD = "product_name"  # uniqueness key for duplicates
 
 

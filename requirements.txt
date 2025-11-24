@@ -7,5 +7,7 @@ langgraph
 openai
 typing-extensions
 python-dotenv
+chromadb
+sentence-transformers
 
 
