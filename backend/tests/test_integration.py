@@ -16,7 +16,7 @@ cur = conn.cursor()
 # -----------------------------------------
 # Test Query
 # -----------------------------------------
-query = "HP laptop 16GB RAM "
+query = "HP laptop 16GB RAM"
 
 print("\n🔍 Step 1 — Semantic Search (ChromaDB)")
 query_emb = embedder.encode(query).tolist()

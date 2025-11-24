@@ -5,9 +5,29 @@ import os
 # ================================
 # CONFIG — set your paths here
 # ================================
-JSON_PATH = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\output\hp catalogue\hp catalogue_output.json"
-DB_PATH   = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\backend\app\database\products.db"
-KEY_FIELD = "product_name"  # uniqueness key for duplicates
+import json
+import sqlite3
+import os
+from pathlib import Path  # <--- Add this import
+
+# ================================
+# DYNAMIC CONFIG (Relative Paths)
+# ================================
+# Calculates project root by going up 3 levels from this file:
+# backend/app/database/sql_db.py -> backend/app/database -> backend/app -> backend -> ROOT
+BASE_DIR = Path(__file__).resolve().parents[3]
+
+# Construct paths relative to the project root
+JSON_PATH = BASE_DIR / "output" / "hp catalogue" / "hp catalogue_output.json"
+DB_PATH   = BASE_DIR / "backend" / "app" / "database" / "products.db"
+KEY_FIELD = "product_name"
+
+# Verify paths (Optional, for debugging)
+print(f"📂 Project Root: {BASE_DIR}")
+print(f"📄 JSON Path: {JSON_PATH}")
+print(f"🗄️ DB Path: {DB_PATH}")
+
+
 
 
 # ================================

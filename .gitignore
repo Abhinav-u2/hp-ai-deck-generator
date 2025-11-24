@@ -2,5 +2,7 @@
 *.pyc
 __pycache__/
 output/
-venv/
+.venv/
 backend/app/database/chroma/
+pyproject.toml
+uv.lock

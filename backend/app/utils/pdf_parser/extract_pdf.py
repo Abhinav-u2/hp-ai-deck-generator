@@ -7,7 +7,15 @@ import random
 from PIL import Image
 from google import genai
 from dotenv import load_dotenv
-from .prompts.prompts import prompt  # your external prompt
+from prompts.prompts import prompt  # your external prompt
+from pathlib import Path 
+
+# -----------------------------------------
+# DYNAMIC PATHS
+# -----------------------------------------
+# Calculate root relative to: backend/app/agents/retrieval_agent.py
+BASE_DIR = Path(__file__).resolve().parents[3]
+BASE_DIR= Path(os.getcwd())
 
 load_dotenv()
 
@@ -16,8 +24,8 @@ load_dotenv()
 # -------------------------------------------------
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-input_folder = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\data\raw\hp catalogue.pdf"
-output_base = "output"
+input_folder = BASE_DIR / "data" / "raw" / "hp catalogue.pdf"
+output_base = BASE_DIR / "output"
 os.makedirs(output_base, exist_ok=True)
 
 
@@ -204,7 +212,7 @@ def process_pdf(pdf_path):
 # MAIN: Process a single PDF
 # -------------------------------------------------
 if __name__ == "__main__":
-    pdf_path = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\data\raw\hp catalogue.pdf"
+    pdf_path = BASE_DIR / "data" / "raw" / "hp catalogue.pdf"
 
     if not os.path.exists(pdf_path):
         print(f"❌ File not found: {pdf_path}")
