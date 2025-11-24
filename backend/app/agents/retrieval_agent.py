@@ -31,24 +31,26 @@ class RetrievalAgent:
         self.db_path = str(SQL_DB_PATH)
 
     # -----------------------------------------------------
-    # Helper: Basic Category Match
+    # FIXED: Flexible Category Match
     # -----------------------------------------------------
     def _is_category_match(self, product_category: str, requested_category: str) -> bool:
         """
-        Checks if product category matches request (e.g. 'Notebook' == 'Laptop').
-        Returns True if match or if no specific category requested.
+        More flexible category matching so we do not drop valid notebook models.
         """
-        if not requested_category or requested_category == "Other":
+        if not requested_category or requested_category.lower() == "other":
             return True
-            
+
         prod_cat = str(product_category).lower()
-        req_cat = requested_category.lower()
-        
-        # Aliases
+        req_cat = str(requested_category).lower()
+
+        # Broad notebook/laptop umbrella (covers ProBook, EliteBook, ZBook etc.)
         if req_cat in ["notebook", "laptop"]:
-            return prod_cat in ["notebook", "laptop"]
-        
-        # Substring match (e.g. "Workstation" matches "Mobile Workstation")
+            return any(keyword in prod_cat for keyword in [
+                "notebook", "laptop", "probook", "elitebook", "zbook", "mobile workstation",
+                "commercial", "business notebook", "notebook pc"
+            ])
+
+        # Default substring match
         return req_cat in prod_cat
 
     # -----------------------------------------------------
@@ -57,9 +59,9 @@ class RetrievalAgent:
     def search_products(self, query: str, category_filter: str = None, limit: int = 20) -> List[Dict[str, Any]]:
         """
         Broad Hybrid Search:
-        1. Vector Search (Get top 50 candidates)
-        2. Filter by Category ONLY (Remove Accessories if user wants Laptop)
-        3. Return raw list to Comparator Agent
+        1. Vector Search (Top 50)
+        2. Category Filter
+        3. SQL Enrichment
         """
         print(f"🔍 Broad Search for: '{query}' | Category: {category_filter}")
         
@@ -90,22 +92,28 @@ class RetrievalAgent:
             prod_name = meta["product_name"]
             prod_cat = meta.get("category", "N/A")
             
-            # Apply Category Filter
             if self._is_category_match(prod_cat, category_filter):
-                # Convert distance to similarity score for sorting
                 similarity = max(0, 1 - dist)
-                
                 filtered_results.append({
                     "product_name": prod_name,
                     "similarity": similarity
                 })
 
-        # 3) Sort by vector similarity
+        # 3) Sort by similarity
         filtered_results = sorted(filtered_results, key=lambda x: x["similarity"], reverse=True)
-        
-        # Keep top N (default 20 to give Comparator enough options)
+
+        # Keep top N results (typically 20)
         final_candidates = filtered_results[:limit]
+
         print(f"✅ Found {len(final_candidates)} candidates matching category '{category_filter}'.")
+
+        # ---------------------------------------------------------------
+        # 🔥 NEW BLOCK: Print ALL 20 vector results BEFORE SQL filtering
+        # ---------------------------------------------------------------
+        print("\n📋 Candidate List BEFORE SQL filtering (raw vector results):")
+        for idx, item in enumerate(final_candidates, 1):
+            print(f"  {idx}. {item['product_name']}  | Similarity: {item['similarity']:.3f}")
+        print("-----------------------------------------------------------")
 
         # 4) Fetch Full SQL Details
         final_products = []
@@ -121,7 +129,6 @@ class RetrievalAgent:
                     
                     if row:
                         p_dict = dict(row)
-                        # Pass similarity to next agent (optional aid)
                         p_dict["vector_score"] = item["similarity"]
                         final_products.append(p_dict)
                         
@@ -137,23 +144,15 @@ class RetrievalAgent:
 from backend.app.graph.state import AgentState
 
 def retrieval_node(state: AgentState) -> dict:
-    """
-    LangGraph Node:
-    1. Reads 'user_query' and 'requirements'.
-    2. Performs BROAD search (high recall).
-    3. Updates 'retrieved_products' with a larger list.
-    """
     print("--- 2. RETRIEVAL NODE: Broad Category Search ---")
     
     user_query = state.get("user_query", "")
     requirements = state.get("requirements", {})
     
-    # Extract category
     category = requirements.get("product_category", None)
     
     agent = RetrievalAgent()
     
-    # Fetch up to 20 products to ensure Comparator has enough to rank
     products = agent.search_products(user_query, category_filter=category, limit=20)
     
     print(f"📦 Retrieved {len(products)} products for Comparator Agent.")

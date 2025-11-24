@@ -27,27 +27,28 @@ class ComparatorAgent:
         Calculates a match score (0 to 100) based on requirements.
         """
         score = 0.0
+
+        # 1. Category Match (+40 pts)
+        req_cat = self._safe_str(reqs.get("product_category"))
+        prod_cat = self._safe_str(product.get("category"))
+        prod_desc = self._safe_str(product.get("description"))
         
-        # 1. RAM Check (+40 pts)
+        if req_cat in prod_cat or req_cat in prod_desc:
+            score += 40
+        
+        # 2. RAM Check (+30 pts)
         req_ram = self._extract_number(reqs.get("specific_requirements", {}).get("ram", "0"))
         prod_ram_val = product.get("spec_ram")
         prod_ram = self._extract_number(prod_ram_val)
         
         # If product max RAM >= User RAM, match.
         if req_ram > 0 and prod_ram >= req_ram:
-            score += 40
+            score += 30
         elif req_ram == 0:
-            score += 20 # Neutral if no RAM asked
+            score += 15 # Neutral if no RAM asked
 
-        # 2. Category Match (+20 pts)
-        req_cat = self._safe_str(reqs.get("product_category"))
-        prod_cat = self._safe_str(product.get("category"))
-        prod_desc = self._safe_str(product.get("description"))
-        
-        if req_cat in prod_cat or req_cat in prod_desc:
-            score += 20
             
-        # 3. GPU / Graphics Check (+30 pts)
+        # 3. GPU / Graphics Check (+20 pts)
         req_gpu = self._safe_str(reqs.get("specific_requirements", {}).get("gpu"))
         prod_gpu = self._safe_str(product.get("spec_gpu"))
         
@@ -59,14 +60,14 @@ class ComparatorAgent:
             ]
             
             if any(x in prod_gpu for x in high_perf_keywords):
-                score += 30
-            elif "intel" in prod_gpu or "integrated" in prod_gpu:
-                score -= 10 # Penalize integrated if dedicated explicitly asked
+                score += 20
+            elif "Intel HD Graphics" in prod_gpu or "Integrated" in prod_gpu:
+                score += 10 # integrated if dedicated explicitly asked
             else:
                 # If "None" or unknown, give 0 extra points (lower than discrete)
                 pass
         else:
-            score += 10 # Neutral if GPU not critical
+            score += 0 # Neutral if GPU not critical
 
         # 4. Weight Check (+10 pts)
         if "light" in str(reqs).lower():

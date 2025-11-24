@@ -9,5 +9,6 @@ typing-extensions
 python-dotenv
 chromadb
 sentence-transformers
+python-pptx
 
 

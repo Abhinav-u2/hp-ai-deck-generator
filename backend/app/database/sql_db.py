@@ -1,37 +1,24 @@
 import json
 import sqlite3
 import os
-
-# ================================
-# CONFIG — set your paths here
-# ================================
-import json
-import sqlite3
-import os
-from pathlib import Path  # <--- Add this import
+from pathlib import Path
 
 # ================================
 # DYNAMIC CONFIG (Relative Paths)
 # ================================
-# Calculates project root by going up 3 levels from this file:
-# backend/app/database/sql_db.py -> backend/app/database -> backend/app -> backend -> ROOT
 BASE_DIR = Path(__file__).resolve().parents[3]
 
-# Construct paths relative to the project root
 JSON_PATH = BASE_DIR / "output" / "hp catalogue" / "hp catalogue_output.json"
 DB_PATH   = BASE_DIR / "backend" / "app" / "database" / "products.db"
 KEY_FIELD = "product_name"
 
-# Verify paths (Optional, for debugging)
 print(f"📂 Project Root: {BASE_DIR}")
 print(f"📄 JSON Path: {JSON_PATH}")
 print(f"🗄️ DB Path: {DB_PATH}")
 
 
-
-
 # ================================
-# Helper functions
+# Helper Functions
 # ================================
 def normalize_value(v):
     """Convert empty or NA values into None."""
@@ -41,6 +28,27 @@ def normalize_value(v):
     if v.lower() in ["na", "n/a", "", "none", "-", "null"]:
         return None
     return v
+
+
+# 🔥 SAME NAME CLEANING AS CHROMA
+def clean_name(name: str):
+    if not name:
+        return None
+
+    name = name.strip()
+    name_lower = name.lower()
+
+    # Reject generic, category-level, or series names
+    blacklist = [
+        "notebook", "notebooks", "tablet", "display",
+        "monitor", "pc", "ultrabook", "series"
+    ]
+
+    for b in blacklist:
+        if name_lower == b or b in name_lower:
+            return None
+
+    return name
 
 
 def load_json(path):
@@ -84,45 +92,54 @@ def ensure_columns(conn, record):
 
 
 def insert_or_update_product(conn, record):
-    # Normalize all values
+    # Normalize values
     record = {k: normalize_value(v) for k, v in record.items()}
 
-    # Ensure all columns exist
     ensure_columns(conn, record)
 
     # Check if product exists
-    cur = conn.execute(f"SELECT * FROM products WHERE {KEY_FIELD} = ?", (record[KEY_FIELD],))
+    cur = conn.execute(
+        f"SELECT * FROM products WHERE {KEY_FIELD} = ?",
+        (record[KEY_FIELD],)
+    )
     existing = cur.fetchone()
 
     if not existing:
         # INSERT new product
         columns = ", ".join(record.keys())
         placeholders = ", ".join(["?"] * len(record))
-        conn.execute(f"INSERT INTO products ({columns}) VALUES ({placeholders})", tuple(record.values()))
+        conn.execute(
+            f"INSERT INTO products ({columns}) VALUES ({placeholders})",
+            tuple(record.values())
+        )
         return
 
-    # UPDATE existing: only fill NA fields
+    # UPDATE only empty fields
     existing_dict = {col[0]: existing[idx] for idx, col in enumerate(cur.description)}
-    updated_fields = {}
+    updated = {}
+
     for key, new_val in record.items():
         old_val = normalize_value(existing_dict.get(key))
         if old_val is None and new_val is not None:
-            updated_fields[key] = new_val
+            updated[key] = new_val
 
-    if updated_fields:
-        set_clause = ", ".join([f"{k} = ?" for k in updated_fields.keys()])
-        params = list(updated_fields.values()) + [record[KEY_FIELD]]
-        conn.execute(f"UPDATE products SET {set_clause} WHERE {KEY_FIELD} = ?", params)
+    if updated:
+        set_clause = ", ".join([f"{k}=?" for k in updated.keys()])
+        params = list(updated.values()) + [record[KEY_FIELD]]
+        conn.execute(
+            f"UPDATE products SET {set_clause} WHERE {KEY_FIELD} = ?",
+            params
+        )
 
 
 # ================================
-# Main import function
+# Main Import Logic (Now Matches Chroma)
 # ================================
 def import_json_to_sql():
     pages = load_json(JSON_PATH)
     conn = connect_db(DB_PATH)
 
-    # Determine initial spec keys from first product that exists
+    # Detect initial spec keys
     spec_keys = []
     for page_entry in pages:
         if page_entry.get("extracted_data"):
@@ -131,15 +148,22 @@ def import_json_to_sql():
 
     create_table(conn, spec_keys)
 
-    # Process each page and each product
     for page_entry in pages:
         page_num = page_entry.get("page")
         image_path = page_entry.get("chart_image_file", "")
 
         for product in page_entry.get("extracted_data", []):
-            # Build record dict
+
+            # CLEAN PRODUCT NAME FIRST (same as Chroma)
+            raw_name = product.get("product_name", "").strip()
+            name = clean_name(raw_name)
+
+            if not name:
+                continue  # skip generic/non-products
+
+            # Build SQL record
             record = {
-                KEY_FIELD: product.get("product_name", "Unknown Product"),
+                KEY_FIELD: name,
                 "product_id": product.get("product_id", "N/A"),
                 "category": product.get("category", "N/A"),
                 "description": product.get("description", "N/A"),
@@ -147,7 +171,7 @@ def import_json_to_sql():
                 "source_page": page_num
             }
 
-            # Flatten specs
+            # Flatten specs into spec_CPU, spec_GPU etc.
             for k, v in product.get("specs", {}).items():
                 record[f"spec_{k}"] = v
 
@@ -155,7 +179,7 @@ def import_json_to_sql():
 
     conn.commit()
     conn.close()
-    print(f"✅ Import completed! Database saved at: {DB_PATH}")
+    print(f"✅ SQL Import Completed! {DB_PATH}")
 
 
 # ================================
