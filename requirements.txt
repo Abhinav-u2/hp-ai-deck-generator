@@ -10,5 +10,7 @@ python-dotenv
 chromadb
 sentence-transformers
 python-pptx
-
+qdrant-client
+google-generativeai
+fastembed
 

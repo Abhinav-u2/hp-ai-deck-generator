@@ -1,6 +1,6 @@
 from openai import OpenAI
 
-client = OpenAI(api_key="YOUR-API-KEY")
+client = OpenAI(api_key="YOUR_API_KEY_HERE")
 
 class RealLLM:
     def __call__(self, prompt: str):

@@ -1,160 +1,314 @@
 import sqlite3
 import os
-import re
-from typing import List, Dict, Any
-from chromadb import PersistentClient
-from sentence_transformers import SentenceTransformer
 from pathlib import Path
+from typing import List, Dict, Any
 
-# -----------------------------------------
-# DYNAMIC PATHS
-# -----------------------------------------
+from qdrant_client import QdrantClient, models
+from fastembed.sparse.sparse_text_embedding import SparseTextEmbedding
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+# ---------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parents[3]
-CHROMA_PATH = BASE_DIR / "backend" / "app" / "database" / "chroma"
+QDRANT_PATH = BASE_DIR / "backend" / "app" / "database" / "qdrant"
 SQL_DB_PATH = BASE_DIR / "backend" / "app" / "database" / "products.db"
 
+# Load API key
+from dotenv import load_dotenv
+load_dotenv()
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
+# ---------------------------------------------------------
+# DENSE EMBEDDING MODEL (Gemini 004)
+# ---------------------------------------------------------
+dense_embedder = GoogleGenerativeAIEmbeddings(
+    model="models/text-embedding-004",
+    google_api_key=GEMINI_KEY
+)
+
+# ---------------------------------------------------------
+# SPARSE MODEL (SPLADE)
+# ---------------------------------------------------------
+sparse_embedder = SparseTextEmbedding(model_name="qdrant/bm25")
+
+
+# =========================================================
+#                    RETRIEVAL AGENT
+# =========================================================
 class RetrievalAgent:
     def __init__(self):
-        """
-        Initializes connections to ChromaDB and SQLite.
-        """
-        print("🔌 Initializing Retrieval Agent resources...")
-        
-        # 1. Connect to Vector DB (Chroma)
-        self.chroma_client = PersistentClient(path=str(CHROMA_PATH))
-        self.collection = self.chroma_client.get_or_create_collection(name="product_specs")
-        
-        # 2. Load Embedding Model
-        self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        
-        # 3. Store SQL Path
+        print("🔌 Initializing Hybrid Retrieval Agent...")
+        self.qdrant = QdrantClient(path=str(QDRANT_PATH))
         self.db_path = str(SQL_DB_PATH)
 
-    # -----------------------------------------------------
-    # FIXED: Flexible Category Match
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
+    # Convert SPLADE dict → indices/values
+    # ---------------------------------------------------------
+    def _convert_sparse(self, sparse_dict: dict):
+        if not sparse_dict:
+            return [], []
+        return list(sparse_dict.keys()), list(sparse_dict.values())
+
+    # ---------------------------------------------------------
+    # Category Logic
+    # ---------------------------------------------------------
     def _is_category_match(self, product_category: str, requested_category: str) -> bool:
-        """
-        More flexible category matching so we do not drop valid notebook models.
-        """
         if not requested_category or requested_category.lower() == "other":
             return True
 
         prod_cat = str(product_category).lower()
         req_cat = str(requested_category).lower()
 
-        # Broad notebook/laptop umbrella (covers ProBook, EliteBook, ZBook etc.)
         if req_cat in ["notebook", "laptop"]:
-            return any(keyword in prod_cat for keyword in [
-                "notebook", "laptop", "probook", "elitebook", "zbook", "mobile workstation",
-                "commercial", "business notebook", "notebook pc"
+            return any(k in prod_cat for k in [
+                "notebook", "laptop", "probook",
+                "elitebook", "zbook",
+                "mobile workstation", "commercial"
             ])
 
-        # Default substring match
         return req_cat in prod_cat
 
-    # -----------------------------------------------------
-    # MAIN SEARCH FUNCTION (Broad Recall)
-    # -----------------------------------------------------
-    def search_products(self, query: str, category_filter: str = None, limit: int = 20) -> List[Dict[str, Any]]:
-        """
-        Broad Hybrid Search:
-        1. Vector Search (Top 50)
-        2. Category Filter
-        3. SQL Enrichment
-        """
-        print(f"🔍 Broad Search for: '{query}' | Category: {category_filter}")
-        
-        # 1) Dense embedding search - Fetch MANY candidates (Top 50)
-        query_emb = self.embedder.encode(query).tolist()
-        
+    # ---------------------------------------------------------
+    # HYBRID SEARCH (Separate queries + RRF fusion)
+    # ---------------------------------------------------------
+    def search_products(self, query: str, category_filter: str = None, limit: int = 20):
+
+        print(f"\n🔍 Hybrid Search for: '{query}' (Category={category_filter})")
+
         try:
-            results = self.collection.query(
-                query_embeddings=[query_emb],
-                n_results=50, 
-                include=["metadatas", "distances"]
-            )
-        except Exception as e:
-            print(f"⚠️ ChromaDB Error: {e}")
-            return []
+            # Dense vector
+            print("  📊 Generating dense embedding...")
+            dense_vec = dense_embedder.embed_query(query)
 
-        if not results['metadatas'] or not results['metadatas'][0]:
-            print("⚠️ No products found in Vector DB.")
-            return []
+            # Sparse vector
+            print("  📊 Generating sparse embedding...")
+            splade = next(sparse_embedder.embed(query))
+            sparse_dict = splade.as_dict()
+            sparse_indices, sparse_values = self._convert_sparse(sparse_dict)
 
-        metas = results["metadatas"][0]
-        scores = results["distances"][0]
+            # ---------------------------------------------------------
+            # OPTION 1: Try new API with FusionQuery
+            # ---------------------------------------------------------
+            try:
+                print("  🔄 Attempting FusionQuery API...")
+                search_result = self.qdrant.query_points(
+                    collection_name="product_specs",
+                    prefetch=[
+                        models.Prefetch(
+                            query=dense_vec,
+                            using="dense",
+                            limit=50
+                        ),
+                        models.Prefetch(
+                            query=models.SparseVector(
+                                indices=sparse_indices,
+                                values=sparse_values
+                            ),
+                            using="sparse",
+                            limit=50
+                        )
+                    ],
+                    query=models.FusionQuery(fusion=models.Fusion.RRF),
+                    limit=limit * 2,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                
+                if search_result and hasattr(search_result, 'points') and search_result.points:
+                    print("  ✅ FusionQuery succeeded!")
+                    results = self._process_results(search_result.points, category_filter, limit)
+                    return self._join_sql(results)
+                    
+            except (AttributeError, TypeError) as e:
+                print(f"  ⚠️ FusionQuery failed ({e}), falling back to separate queries...")
 
-        filtered_results = []
-
-        # 2) Category Filter Only
-        for meta, dist in zip(metas, scores):
-            prod_name = meta["product_name"]
-            prod_cat = meta.get("category", "N/A")
+            # ---------------------------------------------------------
+            # OPTION 2: Fallback - Separate searches + manual RRF
+            # ---------------------------------------------------------
+            print("  🔄 Running separate dense + sparse searches...")
             
-            if self._is_category_match(prod_cat, category_filter):
-                similarity = max(0, 1 - dist)
-                filtered_results.append({
-                    "product_name": prod_name,
-                    "similarity": similarity
+            # Dense search
+            dense_results = self.qdrant.search(
+                collection_name="product_specs",
+                query_vector=models.NamedVector(
+                    name="dense",
+                    vector=dense_vec
+                ),
+                limit=50,
+                with_payload=True
+            )
+
+            # Sparse search
+            sparse_results = self.qdrant.search(
+                collection_name="product_specs",
+                query_vector=models.NamedVector(
+                    name="sparse",
+                    vector=models.SparseVector(
+                        indices=sparse_indices,
+                        values=sparse_values
+                    )
+                ),
+                limit=50,
+                with_payload=True
+            )
+
+            print(f"  ✅ Dense: {len(dense_results)} results, Sparse: {len(sparse_results)} results")
+
+            # Manual RRF fusion
+            fused_results = self._reciprocal_rank_fusion(dense_results, sparse_results, k=60)
+            
+            # Process and filter
+            processed = self._process_results(fused_results, category_filter, limit)
+            return self._join_sql(processed)
+
+        except Exception as e:
+            print(f"❌ Error in search_products: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    # ---------------------------------------------------------
+    # Reciprocal Rank Fusion (Manual Implementation)
+    # ---------------------------------------------------------
+    def _reciprocal_rank_fusion(self, dense_results, sparse_results, k=60):
+        """
+        Combine dense and sparse results using RRF algorithm
+        RRF score = sum(1 / (k + rank))
+        """
+        scores = {}
+        
+        # Score dense results
+        for rank, result in enumerate(dense_results, start=1):
+            product_name = result.payload.get("product_name")
+            if product_name:
+                if product_name not in scores:
+                    scores[product_name] = {
+                        "payload": result.payload,
+                        "score": 0.0
+                    }
+                scores[product_name]["score"] += 1.0 / (k + rank)
+        
+        # Score sparse results
+        for rank, result in enumerate(sparse_results, start=1):
+            product_name = result.payload.get("product_name")
+            if product_name:
+                if product_name not in scores:
+                    scores[product_name] = {
+                        "payload": result.payload,
+                        "score": 0.0
+                    }
+                scores[product_name]["score"] += 1.0 / (k + rank)
+        
+        # Sort by RRF score
+        sorted_results = sorted(
+            scores.items(),
+            key=lambda x: x[1]["score"],
+            reverse=True
+        )
+        
+        # Convert back to result format
+        class FusedResult:
+            def __init__(self, payload, score):
+                self.payload = payload
+                self.score = score
+        
+        return [
+            FusedResult(item[1]["payload"], item[1]["score"])
+            for item in sorted_results
+        ]
+
+    # ---------------------------------------------------------
+    # Process and filter results
+    # ---------------------------------------------------------
+    def _process_results(self, results, category_filter, limit):
+        """Process search results with category filtering"""
+        final = []
+        for pt in results:
+            payload = pt.payload if hasattr(pt, 'payload') else {}
+            name = payload.get("product_name")
+            cat = payload.get("category", "")
+            score = pt.score if hasattr(pt, 'score') else 0.0
+
+            if name and self._is_category_match(cat, category_filter):
+                final.append({
+                    "product_name": name,
+                    "similarity": score
                 })
 
-        # 3) Sort by similarity
-        filtered_results = sorted(filtered_results, key=lambda x: x["similarity"], reverse=True)
+        final = sorted(final, key=lambda x: x["similarity"], reverse=True)
+        candidates = final[:limit]
 
-        # Keep top N results (typically 20)
-        final_candidates = filtered_results[:limit]
+        print(f"✅ Hybrid retrieved {len(candidates)} matching products.\n")
 
-        print(f"✅ Found {len(final_candidates)} candidates matching category '{category_filter}'.")
+        print("📋 Candidate List BEFORE SQL join:")
+        for i, c in enumerate(candidates, 1):
+            print(f"  {i}. {c['product_name']} | Score={c['similarity']:.3f}")
+        print("--------------------------------------------------------------")
 
-        # ---------------------------------------------------------------
-        # 🔥 NEW BLOCK: Print ALL 20 vector results BEFORE SQL filtering
-        # ---------------------------------------------------------------
-        print("\n📋 Candidate List BEFORE SQL filtering (raw vector results):")
-        for idx, item in enumerate(final_candidates, 1):
-            print(f"  {idx}. {item['product_name']}  | Similarity: {item['similarity']:.3f}")
-        print("-----------------------------------------------------------")
+        return candidates
 
-        # 4) Fetch Full SQL Details
-        final_products = []
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                for item in final_candidates:
-                    name = item["product_name"]
-                    cursor.execute("SELECT * FROM products WHERE product_name = ?", (name,))
-                    row = cursor.fetchone()
-                    
+    # ---------------------------------------------------------
+    # SQL JOIN
+    # ---------------------------------------------------------
+    def _join_sql(self, candidates):
+        """Join vector results with SQL database"""
+        results = []
+        
+        if not candidates:
+            return results
+            
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+
+            for item in candidates:
+                try:
+                    cur.execute(
+                        "SELECT * FROM products WHERE product_name = ?",
+                        (item["product_name"],)
+                    )
+                    row = cur.fetchone()
+
                     if row:
-                        p_dict = dict(row)
-                        p_dict["vector_score"] = item["similarity"]
-                        final_products.append(p_dict)
-                        
-        except Exception as e:
-            print(f"❌ Database Error: {e}")
-            return []
+                        p = dict(row)
+                        p["vector_score"] = item["similarity"]
+                        results.append(p)
+                except sqlite3.Error as e:
+                    print(f"⚠️ SQL error for {item['product_name']}: {e}")
+                    continue
 
-        return final_products
+        print(f"✅ SQL JOIN complete: {len(results)} products with full specs.\n")
+        return results
 
-# -------------------------------------------------------------
+
+# =========================================================
 # LangGraph Node Wrapper
-# -------------------------------------------------------------
+# =========================================================
 from backend.app.graph.state import AgentState
 
 def retrieval_node(state: AgentState) -> dict:
-    print("--- 2. RETRIEVAL NODE: Broad Category Search ---")
-    
+    """
+    LangGraph node wrapper for retrieval agent
+    """
+    print("--- 2. HYBRID RETRIEVAL NODE ---")
+
     user_query = state.get("user_query", "")
     requirements = state.get("requirements", {})
-    
     category = requirements.get("product_category", None)
-    
+
+    if not user_query:
+        print("⚠️ No user query found in state!")
+        return {"retrieved_products": []}
+
     agent = RetrievalAgent()
-    
     products = agent.search_products(user_query, category_filter=category, limit=20)
-    
+
     print(f"📦 Retrieved {len(products)} products for Comparator Agent.")
     
+    if products:
+        print("\n📋 Sample Retrieved Products:")
+        for i, p in enumerate(products[:3], 1):
+            print(f"  {i}. {p.get('product_name', 'Unknown')} - Score: {p.get('vector_score', 0):.3f}")
+
     return {"retrieved_products": products}
