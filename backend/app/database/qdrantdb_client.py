@@ -37,6 +37,7 @@ def embed_dense(text: str):
 # -----------------------------------------
 sparse_encoder = SparseTextEmbedding(model_name="qdrant/bm25")
 
+
 def embed_sparse(text: str):
     """Generate sparse BM25 vector."""
     vecs = list(sparse_encoder.embed(text))

@@ -6,3 +6,5 @@ venv/
 backend/app/database/qdrant/
 pyproject.toml
 uv.lock
+backend/app/database/products.db
+HP_Proposal_Professional.pptx
