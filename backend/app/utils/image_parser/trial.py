@@ -2,20 +2,26 @@ import os
 import json
 from pathlib import Path
 import fitz  # PyMuPDF
-from llama_parse import LlamaParse
-
+# from llama_parse import LlamaParse
 
 # ===============================
-# CONFIG
+# ⚙️ DYNAMIC CONFIGURATION
 # ===============================
+# Calculate Project Root: backend/app/utils/image_parser/trial.py -> Root
+BASE_DIR = Path(__file__).resolve().parents[4]
 
-PDF_PATH = r"C:\Users\vikas.singh1\Desktop\hp-ai-deck-generator\backend\app\utils\image_parser\PC_Catalogue_2014_nahladove_PDF_v2.pdf"
-API_KEY = "llx-m7bfWCO60zBS90aScVHZjAj9iCTGq6KYZ6C3qKKE0uT4VGyQ"   # free-tier key (markdown-only)
-
-OUTPUT_DIR = Path("output")
-TEXT_DIR = OUTPUT_DIR / "text"
+# Paths
+DATA_DIR = BASE_DIR / "data" / "raw"
+OUTPUT_DIR = BASE_DIR / "output"
 IMG_DIR = OUTPUT_DIR / "images"
 
+# Ensure folders exist
+IMG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Input PDF (Standardized Name)
+PDF_PATH = DATA_DIR  / "PC_Catalogue_2014_nahladove_PDF_v2.pdf"
+
+TEXT_DIR = OUTPUT_DIR / "text"
 TEXT_DIR.mkdir(parents=True, exist_ok=True)
 IMG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -24,29 +30,29 @@ IMG_DIR.mkdir(parents=True, exist_ok=True)
 # PART 1 — LLAMAPARSE (FULL PDF → ONE MARKDOWN FILE)
 # ===============================
 
-def extract_full_markdown():
-    print("🔹 Extracting full PDF text using LlamaParse…")
+# def extract_full_markdown():
+#     print("🔹 Extracting full PDF text using LlamaParse…")
 
-    parser = LlamaParse(
-        api_key=API_KEY,
-        result_type="markdown",
-        extract_charts=True,
-        auto_mode=True,
-        auto_mode_trigger_on_image_in_page=True,
-        auto_mode_trigger_on_table_in_page=True,
-    )
+#     parser = LlamaParse(
+#         api_key=API_KEY,
+#         result_type="markdown",
+#         extract_charts=True,
+#         auto_mode=True,
+#         auto_mode_trigger_on_image_in_page=True,
+#         auto_mode_trigger_on_table_in_page=True,
+#     )
 
-    with open(PDF_PATH, "rb") as f:
-        docs = parser.load_data(f, extra_info={"file_name": PDF_PATH})
+#     with open(PDF_PATH, "rb") as f:
+#         docs = parser.load_data(f, extra_info={"file_name": PDF_PATH})
 
-    output_md_path = TEXT_DIR / "full_document.md"
+#     output_md_path = TEXT_DIR / "full_document.md"
 
-    with open(output_md_path, "w", encoding="utf-8") as f:
-        for doc in docs:
-            f.write(doc.text)
+#     with open(output_md_path, "w", encoding="utf-8") as f:
+#         for doc in docs:
+#             f.write(doc.text)
 
-    print(f"✅ Saved full markdown at: {output_md_path}")
-    return output_md_path
+#     print(f"✅ Saved full markdown at: {output_md_path}")
+#     return output_md_path
 
 
 
@@ -253,7 +259,7 @@ def extract_images_with_bold_title_detection():
 # RUN PIPELINE
 # ===============================
 
-md_file = extract_full_markdown()
+# md_file = extract_full_markdown()
 # image_metadata = extract_images_with_positions()
 image_metadata = extract_images_with_bold_title_detection()
 
