@@ -112,8 +112,8 @@ def test_full_pipeline():
 
     pitch = state["sales_pitch"]
 
-    print("\n📝 Sales Pitch:")
-    print(json.dumps(pitch, indent=2))
+    # print("\n📝 Sales Pitch:")
+    # print(json.dumps(pitch, indent=2))
 
     if not pitch:
         print("❌ Sales Pitch Agent Failed")
@@ -125,7 +125,7 @@ def test_full_pipeline():
     print_section("STEP 5: AGENT 5 (PPT Deck Generation)")
 
     # Use top 3 ranked products for the deck
-    top_products = ranked[:3]
+    top_products = ranked[:5]
 
     deck_path = create_professional_ppt(
         sales_pitch=pitch,
