@@ -4,7 +4,13 @@ __pycache__/
 output/
 venv/
 backend/app/database/qdrant/
+backend/app/database/qdrant1/
 pyproject.toml
 uv.lock
 backend/app/database/products.db
+backend/app/database/products1.db
 HP_Proposal_Professional.pptx
+minio.exe
+output11/
+
+

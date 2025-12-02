@@ -14,4 +14,7 @@ qdrant-client
 google-generativeai
 fastembed
 langchain_google_genai
+rapidfuzz
+llama_parse
+minio
 
