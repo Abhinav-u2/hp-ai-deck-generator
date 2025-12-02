@@ -1,6 +1,10 @@
+import os
 from openai import OpenAI
+from dotenv import load_dotenv
 
-client = OpenAI(api_key="YOUR_API_KEY")
+load_dotenv()
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class RealLLM:
     def __call__(self, prompt: str):

@@ -2,11 +2,14 @@
 # HP SALES DECK GENERATOR — FINAL + FIXED + COMPLETE VERSION
 # --------------------------------------------------------------
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
+from io import BytesIO
+import requests
 import os
 import json
+
 
 # ----------------------
 # BRAND COLORS / FONTS
@@ -50,9 +53,9 @@ def slide_title(prs, pdf_title):
 
     # Create a text box centered horizontally
     left = Inches(1)
-    top = Inches(2)
+    top = Inches(0.5)
     width = Inches(8)     # wide enough to wrap naturally
-    height = Inches(2)    # tall enough for 2–3 lines
+    height = Inches(6)    # tall enough for 2–3 lines
 
     box = slide.shapes.add_textbox(left, top, width, height)
     tf = box.text_frame
@@ -66,7 +69,7 @@ def slide_title(prs, pdf_title):
     # Set font
     font = p.font
     font.bold = True
-    font.size = Pt(34)
+    font.size = Pt(30)
     font.color.rgb = BRAND_PRIMARY
 
     # Let PowerPoint wrap text automatically
@@ -286,32 +289,211 @@ def slide_comparison(prs, products, specs_list):
 
 
 
-# ----------------------
-# Slide 9 — Upsell Products
-# ----------------------
-def slide_upsell(prs, upsells):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+# ===============================================================
+# UNIVERSAL HELPERS
+# ===============================================================
 
-    header = slide.shapes.add_textbox(Inches(0.6), Inches(0.5), Inches(9), Inches(0.7)).text_frame
-    header.text = "Upsell Options"
-    set_font(header.paragraphs[0], 22, bold=True, color=BRAND_PRIMARY)
+EMU_PER_INCH = 914400
 
-    body = slide.shapes.add_textbox(Inches(0.6), Inches(1.3), Inches(8.5), Inches(5.4)).text_frame
+def to_emu(value_in_inches):
+    """Convert float inches → EMU integer."""
+    return int(value_in_inches * EMU_PER_INCH)
 
-    for up in upsells[:6]:
-        if isinstance(up, dict):
-            name = up.get("product_name", "Unnamed")
-            price = up.get("price", "N/A")
+
+# ===============================================================
+# PERFECT IMAGE PLACEMENT IN FIXED BOX
+# ===============================================================
+
+def add_image_in_box(slide, left_in, top_in, width_in, height_in, image_path):
+    """Place image scaled inside bounding box, never overflowing."""
+    if not image_path:
+        return
+
+    try:
+        # Load image (local or online)
+        if os.path.exists(image_path):
+            img_bytes = image_path
         else:
-            name = str(up)
-            price = "N/A"
+            r = requests.get(image_path, timeout=5)
+            r.raise_for_status()
+            img_bytes = BytesIO(r.content)
 
-        p = body.add_paragraph()
-        p.text = f"• {name} — {price}"
-        set_font(p, 14)
+        # Convert all to EMU
+        L = to_emu(left_in)
+        T = to_emu(top_in)
+        W = to_emu(width_in)
+        H = to_emu(height_in)
 
-    add_footer(slide, "Upsell Suggestions")
-    return slide
+        # Place at 0,0 first
+        pic = slide.shapes.add_picture(img_bytes, L, T)
+
+        # Aspect ratio
+        ratio = pic.width / pic.height
+
+        # Scale to fit inside box
+        if W / H > ratio:
+            # height-limited
+            new_h = H
+            new_w = int(new_h * ratio)
+        else:
+            # width-limited
+            new_w = W
+            new_h = int(new_w / ratio)
+
+        pic.width = new_w
+        pic.height = new_h
+
+        # Center in box
+        pic.left = L + int((W - new_w) / 2)
+        pic.top  = T + int((H - new_h) / 2)
+
+    except Exception as e:
+        print(f"[IMAGE ERROR] {image_path}: {e}")
+
+
+# ===============================================================
+# WRAPPED TEXT INSIDE FIXED BOX
+# ===============================================================
+
+def add_text_in_box(slide, left_in, top_in, width_in, height_in, text, size=12, bold=False, align="center"):
+    left = to_emu(left_in)
+    top = to_emu(top_in)
+    width = to_emu(width_in)
+    height = to_emu(height_in)
+
+    textbox = slide.shapes.add_textbox(left, top, width, height)
+    tf = textbox.text_frame
+    tf.word_wrap = True
+
+    p = tf.paragraphs[0]
+    p.text = text.replace("\n", " ")
+    p.font.size = Pt(size)
+    p.font.bold = bold
+    p.font.color.rgb = RGBColor(0, 0, 0)
+
+    if align.lower() == "center":
+        p.alignment = PP_ALIGN.CENTER
+    elif align.lower() == "left":
+        p.alignment = PP_ALIGN.LEFT
+    else:
+        p.alignment = PP_ALIGN.JUSTIFY
+
+
+# ===============================================================
+# COMPLETE FIXED + PERFECTED UPSELL SLIDE GENERATOR
+# ===============================================================
+
+def build_upsell_slides(prs, upsell_structured):
+    """
+    Build upsell slides (3 categories per slide, 3 products per category).
+    Layout:
+    --------------------------------------------------------
+    |         |              |                             |
+    |  CAT1   |    CAT2      |            CAT3             |
+    | (3 prod)|   (3 prod)   |           (3 prod)          |
+    --------------------------------------------------------
+    """
+    
+    COLUMNS_PER_SLIDE = 3
+    PRODUCTS_PER_COLUMN = 3
+
+    slide_num = 1
+
+    # Loop in groups of 3 categories
+    for idx in range(0, len(upsell_structured), COLUMNS_PER_SLIDE):
+
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+        # Header
+        header_box = slide.shapes.add_textbox(to_emu(0.5), to_emu(0.2), to_emu(9), to_emu(0.6))
+        header_tf = header_box.text_frame
+        header_tf.text = f"Upsell Recommendations — Page {slide_num}"
+        header_tf.paragraphs[0].font.size = Pt(28)
+        header_tf.paragraphs[0].font.bold = True
+
+        # --- Layout constants ---
+        content_left = 0.5
+        content_width = 9.0
+        col_width = content_width / 3
+
+        top_start = 1.2
+        total_height = 6.0
+
+        # Product block height
+        block_height = total_height / PRODUCTS_PER_COLUMN
+
+        # Process the 3 columns on this slide
+        for col_offset, category in enumerate(upsell_structured[idx : idx + COLUMNS_PER_SLIDE]):
+
+            cat_left = content_left + col_offset * col_width
+
+            # Category Title
+            add_text_in_box(
+                slide,
+                left_in=cat_left,
+                top_in=top_start,
+                width_in=col_width,
+                height_in=0.40,
+                text=category["category"],
+                size=22,
+                bold=True
+            )
+
+            # Products
+            products = category["products"][:PRODUCTS_PER_COLUMN]
+
+            for p_i, product in enumerate(products):
+
+                # Compute box top
+                block_top = top_start + 0.40 + p_i * block_height
+
+                # Subdivision: image, title, description
+                img_h = block_height * 0.50
+                name_h = block_height * 0.18
+                desc_h = block_height * 0.32
+
+                # 1 — IMAGE
+                add_image_in_box(
+                    slide,
+                    left_in=cat_left,
+                    top_in=block_top,
+                    width_in=col_width,
+                    height_in=img_h,
+                    image_path=product.get("image_path")
+                )
+
+                # 2 — NAME
+                add_text_in_box(
+                    slide,
+                    left_in=cat_left,
+                    top_in=block_top + img_h,
+                    width_in=col_width,
+                    height_in=name_h,
+                    text=product.get("product_name", "Unnamed Product"),
+                    size=14,
+                    bold=True
+                )
+
+                # 3 — DESCRIPTION
+                desc = (product.get("description") or "").strip()
+                desc = desc[:70]  # hard safety wrap
+                add_text_in_box(
+                    slide,
+                    left_in=cat_left,
+                    top_in=block_top + img_h + name_h,
+                    width_in=col_width,
+                    height_in=desc_h,
+                    text=desc,
+                    size=11,
+                    bold=False,
+                    align="left"
+                )
+
+        slide_num += 1
+
+    return prs
+
+
 
 
 # ----------------------
@@ -349,7 +531,7 @@ def create_professional_ppt(
     # Normalize Inputs
     pdf_title = sales_pitch.get("pitch_summary", "HP Proposal") if sales_pitch else "HP Proposal"
     extracted_requirements = sales_pitch.get("extracted_requirements", [])
-    upsell_products = sales_pitch.get("upsell_opportunities", [])
+    upsell_products = sales_pitch.get("upsell_opportunities", {})
     conclusion_text = sales_pitch.get("conclusion", "Recommended next steps")
     products = products or []
     output_file = output_file or "HP_Proposal.pptx"
@@ -397,10 +579,11 @@ def create_professional_ppt(
 
 
     slide_comparison(prs, products,specs_list)
-    slide_upsell(prs, upsell_products)
+    build_upsell_slides(prs, upsell_products["structured"])
     slide_conclusion(prs, conclusion_text)
 
     prs.save(output_file)
+    print("\n=== DEBUG: extracted_requirements ===")
     print(f"\n🎉 SUCCESS: PowerPoint generated → {output_file}")
     return output_file
 

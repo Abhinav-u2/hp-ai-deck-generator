@@ -253,7 +253,7 @@ def extract_images_with_bold_title_detection():
 # RUN PIPELINE
 # ===============================
 
-md_file = extract_full_markdown()
+# md_file = extract_full_markdown()
 # image_metadata = extract_images_with_positions()
 image_metadata = extract_images_with_bold_title_detection()
 
