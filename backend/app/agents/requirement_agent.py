@@ -1,225 +1,171 @@
-# backend/app/agents/requirement_agent.py
-
 from __future__ import annotations
 import re
 import logging
+import json
+import os
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
-
-
+from dotenv import load_dotenv
+ 
+load_dotenv()
 LOG = logging.getLogger(__name__)
-
-
+ 
 # -------------------------------------------------------------
-# 1️⃣ Pydantic Schema for Structured Output
+# 1️⃣ Pydantic Schema (Relaxed for Stability)
 # -------------------------------------------------------------
 class ProductRequest(BaseModel):
     product_category: str = Field(
-        description=(
-            "The product category: Notebook, Tablet, Desktop, Workstation, "
-            "Display, Docking Station, Retail Solution, POS System, Accessory, "
-            "Peripheral, Other."
-        )
+        description="The product category: Notebook, Tablet, Desktop, Workstation, Display, Accessory, etc."
     )
-    quantity: Optional[int] = Field(
-        description="Number of units requested; default = 1 if missing"
+    quantity: int = Field(
+        description="Number of units requested. Return 1 if not specified."
     )
     budget_per_unit: Optional[int] = Field(
-        description="Maximum budget per unit. Remove currency symbols."
+        description="Maximum budget per unit in numbers only (e.g. 100000). Null if not mentioned."
     )
-    specific_requirements: Dict[str, Any] = Field(
-        description="Extracted technical constraints (RAM, GPU, weight, size, etc.)"
+    # Changed to Any to prevent crash on bad LLM output
+    specific_requirements: Any = Field(
+        description="Technical specs as key-value pairs. Example: {'ram': '16GB', 'gpu': 'Nvidia', 'weight': 'light'}."
     )
-
-
+    user_intent: str = Field(
+        description="A short summary of the user's goal (e.g., 'Video Editing', 'Travel')."
+    )
+ 
+ 
 # -------------------------------------------------------------
 # 2️⃣ Requirement Agent
 # -------------------------------------------------------------
 class RequirementAgent:
-    """
-    Extracts structured product requirements from natural-language queries.
-
-    Features:
-    - Primary: Structured LLM extraction using Pydantic
-    - Secondary: Rule-based fallback parser
-    - Category classifier for HP catalogue use cases
-    """
-
-    CATEGORIES = [
-        "Notebook", "Laptop", "Tablet", "Desktop", "Workstation",
-        "Display", "Monitor", "Thin Client", "Retail Solution",
-        "POS System", "Accessory", "Docking Station", "Peripheral", "Other"
-    ]
-
     def __init__(self, llm_api_key: Optional[str] = None):
         self.llm = None
-        if llm_api_key:
-            self.llm = ChatOpenAI(model="gpt-4o", temperature=0, api_key=llm_api_key)
-
+        api_key = llm_api_key or os.getenv("GEMINI_API_KEY")
+       
+        if api_key:
+            self.llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                temperature=0,
+                google_api_key=api_key
+            )
+        else:
+            LOG.warning("⚠️ No GEMINI_API_KEY found. Agent will use fallback mode only.")
+ 
     # ---------------------------------------------------------
     # 3️⃣ LLM Extraction
     # ---------------------------------------------------------
     def extract_with_llm(self, query: str) -> Dict:
+        if not self.llm: return None
+           
         try:
             structured_llm = self.llm.with_structured_output(ProductRequest)
-
-            system_prompt = (
-                "You are an HP Pre-Sales Requirement Extraction Agent. "
-                "Your task: Convert user queries into structured fields:\n\n"
-                "1. Correct HP product category\n"
-                "2. Quantity\n"
-                "3. Budget per unit (numeric)\n"
-                "4. Technical requirements (RAM, GPU, CPU, screen size, weight, etc.)\n\n"
-                "Always choose the most accurate category from the list."
-            )
-
+ 
+            system_prompt = """
+            You are an HP Sales Assistant. Extract structured data from the user's query.
+           
+            IMPORTANT RULES:
+            1. Return 'specific_requirements' as a valid JSON Object, NOT a string.
+               CORRECT: {"ram": "16GB", "gpu": "Nvidia"}
+               WRONG: "16GB ram with nvidia gpu"
+            2. Convert currency to integers (e.g. '1.5 Lakh' -> 150000).
+            3. Infer the 'user_intent' based on context.
+            """
+ 
             result = structured_llm.invoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=query)
             ])
-
-            LOG.info("LLM successfully extracted requirements")
-            return result.model_dump()
-
+           
+            # --- DEBUGGING: Print Raw Output ---
+            # print(f"🔍 DEBUG RAW LLM RESPONSE: {result}")
+ 
+            data = result.model_dump()
+ 
+            # --- FIX: Handle if specific_requirements came back as string ---
+            specs = data.get("specific_requirements")
+            if isinstance(specs, str):
+                try:
+                    # Try parsing if it looks like JSON
+                    if specs.strip().startswith("{"):
+                        data["specific_requirements"] = json.loads(specs)
+                    else:
+                        # Fallback: wrap the string in a generic key
+                        data["specific_requirements"] = {"description": specs}
+                except:
+                    data["specific_requirements"] = {}
+           
+            elif specs is None:
+                data["specific_requirements"] = {}
+ 
+            return data
+ 
         except Exception as e:
-            LOG.error("LLM extraction failed: %s", str(e))
+            print(f"❌ Gemini extraction failed: {e}")
             return None
-
-   # ---------------------------------------------------------
-    # 4️⃣ Rule-Based Fallback Parser (Improved)
+ 
+    # ---------------------------------------------------------
+    # 4️⃣ Rule-Based Fallback Parser
     # ---------------------------------------------------------
     def fallback_extract(self, query: str) -> Dict:
-        LOG.warning("Using fallback requirement parser...")
+        print("⚠️ Using fallback regex parser...")
         q = query.lower()
-
-        # 1. Quantity
-        qty = None
-        # Looks for "10 laptops", "5 units", etc.
-        m_qty = re.search(r"(\d+)\s*(?:units|pcs|systems|machines|laptops|notebooks)", q)
-        if m_qty:
-            qty = int(m_qty.group(1))
-
-        # 2. Budget (Handle 'Lakh', 'k', and standard numbers)
+ 
+        qty = 1
+        m_qty = re.search(r"(\d+)\s*(?:units|pcs|systems|machines|laptops)", q)
+        if m_qty: qty = int(m_qty.group(1))
+ 
         price = None
-        
-        # Check for 'Lakh' (e.g., "1.5 lakh", "1 lakh")
         m_lakh = re.search(r"(?:rs\.?|₹|inr)?\s*(\d+(?:\.\d+)?)\s*lakh", q)
-        if m_lakh:
-            price = int(float(m_lakh.group(1)) * 100000)
-        
-        # Check for 'k' (e.g., "100k")
-        elif "k" in q:
-            m_k = re.search(r"(?:rs\.?|₹|inr)?\s*(\d+(?:\.\d+)?)\s*k", q)
-            if m_k:
-                price = int(float(m_k.group(1)) * 1000)
-        
-        # Standard numbers (e.g., "100000", "1,00,000")
-        if not price:
-            m_num = re.search(r"(?:rs\.?|₹|inr)\s*(\d[\d,]*)", q)
-            if m_num:
-                price = int(m_num.group(1).replace(",", ""))
-
-        # 3. RAM
+        if m_lakh: price = int(float(m_lakh.group(1)) * 100000)
+       
         ram = None
         m_ram = re.search(r"(\d+)\s*gb", q)
-        if m_ram:
-            ram = f"{m_ram.group(1)}GB"
-
-        # 4. GPU
-        gpu = None
-        if "gpu" in q or "graphics" in q or "nvidia" in q:
-            gpu = "Dedicated"
-
-        # 5. Weight
-        weight = None
-        if "light" in q:
-            weight = "Lightweight" # Abstract constraint
-        
-        m_weight = re.search(r"(\d\.\d+)\s*kg", q)
-        if m_weight:
-            weight = f"{m_weight.group(1)} kg"
-
-        # 6. Category Heuristic
+        if m_ram: ram = f"{m_ram.group(1)}GB"
+ 
+        gpu = "Dedicated" if any(x in q for x in ["gpu", "nvidia", "rendering"]) else None
+        weight = "Lightweight" if "light" in q or "travel" in q else None
+ 
         category = "Other"
-        if "laptop" in q or "notebook" in q:
-            category = "Notebook"
-        elif "workstation" in q or "zbook" in q:
-            category = "Workstation" # Specific overrides
-        elif "tablet" in q:
-            category = "Tablet"
-        elif "desktop" in q or "computer" in q or "pc" in q:
-            category = "Desktop"
-        elif "display" in q or "monitor" in q:
-            category = "Display"
-        elif "bag" in q or "backpack" in q or "mouse" in q:
-            category = "Accessories"
-
+        if any(x in q for x in ["laptop", "notebook"]): category = "Notebook"
+        elif "workstation" in q: category = "Workstation"
+        elif "desktop" in q: category = "Desktop"
+        elif any(x in q for x in ["bag", "mouse"]): category = "Accessory"
+ 
+        intent = "General Usage"
+        if any(x in q for x in ["video", "edit", "render"]): intent = "High Performance"
+        elif "travel" in q: intent = "Travel"
+ 
         return {
             "product_category": category,
-            "quantity": qty or 1,
+            "quantity": qty,
             "budget_per_unit": price,
             "specific_requirements": {
                 "ram": ram,
                 "gpu": gpu,
                 "weight": weight
-            }
+            },
+            "user_intent": intent
         }
-
+ 
     # ---------------------------------------------------------
-    # 5️⃣ Public Method
+    # 5️⃣ Main Entry Point
     # ---------------------------------------------------------
     def parse(self, query: str) -> Dict:
-        """
-        Main entry point used by orchestrator.
-        Attempts LLM extraction → otherwise fallback parser.
-        """
-        # Try LLM first
-        if self.llm:
-            result = self.extract_with_llm(query)
-            if result:
-                return result
-
-        # Fallback parser
+        result = self.extract_with_llm(query)
+        if result: return result
         return self.fallback_extract(query)
-
-
-# -------------------------------------------------------------
-# Quick Test
-# -------------------------------------------------------------
-if __name__ == "__main__":
-    agent = RequirementAgent(llm_api_key=None)  # no LLM → fallback only
-
-    test_query = "We need 10 laptops for design team, ₹1,00,000 each, 16GB RAM, lightweight, dedicated GPU."
-    print(agent.parse(test_query))
-
-# ... [Your existing code ends here] ...
-
+ 
 # -------------------------------------------------------------
 # 6️⃣ LangGraph Node Wrapper
 # -------------------------------------------------------------
-from backend.app.graph.state import AgentState
-
 def requirement_node(state: AgentState) -> dict:
-    """
-    LangGraph Node:
-    1. Reads 'user_query' from state.
-    2. Uses RequirementAgent to parse it.
-    3. Updates 'requirements' in state.
-    """
     print("--- 1. REQUIREMENT NODE: Parsing Query ---")
-    query = state["user_query"]
-    
-    # Initialize agent (Ensure API key is set in env if using LLM)
-    agent = RequirementAgent(llm_api_key=None) 
-    
-    # Use the parse method from your existing class
+    query = state.get("user_query", "")
+    agent = RequirementAgent()
     structured_data = agent.parse(query)
-    
+   
     if structured_data:
         print(f"✅ Extracted: {structured_data}")
         return {"requirements": structured_data}
     else:
-        print("❌ Failed to extract requirements.")
         return {"requirements": {}}

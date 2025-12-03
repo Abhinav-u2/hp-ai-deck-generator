@@ -1,0 +1,11 @@
+{
+  "product_category": "Notebook",
+  "quantity": 10,
+  "budget_per_unit": 100000,
+  "specific_requirements": {
+    "ram": "8GB",
+    "weight": "light",
+    "graphics": "good"
+  },
+  "user_intent": "Design"
+}

@@ -1,0 +1,9 @@
+{
+  "user_query": "We need 10 laptops for a design team, around ₹1 lakh each, lightweight, 8GB RAM, and good graphics.",
+  "ppt_path": "HP_Proposal_Professional.pptx",
+  "requirements_file": "evaluation_outputs/requirements.json",
+  "retrieved_products_file": "evaluation_outputs/retrieved_products.json",
+  "ranked_products_file": "evaluation_outputs/ranked_products.json",
+  "sales_pitch_file": "evaluation_outputs/sales_pitch.json",
+  "ppt_text_file": "evaluation_outputs/ppt_text.json"
+}
