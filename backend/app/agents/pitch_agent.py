@@ -6,6 +6,7 @@ from pathlib import Path
 
 LOG = logging.getLogger(__name__)
 
+
 class SalesPitchAgent:
 
     def __init__(self, llm):
@@ -14,6 +15,10 @@ class SalesPitchAgent:
         """
         self.llm = llm
 
+
+    def _ask_llm(self, prompt):
+        response = self.llm.invoke(prompt)
+        return response.content if hasattr(response, "content") else str(response)
     # ---------------------------------------------------------
     # Main public method
     # ---------------------------------------------------------
@@ -29,10 +34,10 @@ class SalesPitchAgent:
         pitch_summary = self._summarize_pitch(highlights, competitive_adv)
 
         return {
-            "pitch_summary": pitch_summary,
-            "product_highlights": highlights,
-            "reasons_to_buy": reasons_to_buy,
-            "competitive_advantages": competitive_adv,
+            "pitch_summary": str(pitch_summary),
+            "product_highlights": str(highlights),
+            "reasons_to_buy": str(reasons_to_buy),
+            "competitive_advantages": str(competitive_adv),
             "upsell_opportunities": upsell,
             "extracted_requirements": customer_req    
         }
@@ -74,7 +79,7 @@ class SalesPitchAgent:
         - Bullet 5
         ---
         """
-        return self.llm(prompt)
+        return self._ask_llm(prompt)
 
 
 
@@ -105,7 +110,7 @@ class SalesPitchAgent:
         - Reason 3
         ---
         """
-        return self.llm(prompt)
+        return self._ask_llm(prompt)
 
 
     def _competitive_advantages(self, products):
@@ -139,12 +144,12 @@ class SalesPitchAgent:
         - Advantage 5
         ---
         """
-        return self.llm(prompt)
+        return self._ask_llm(prompt)
     
 
     
     # DB_PATH = Path(__file__).resolve().parents[3] / "backend" / "app" / "database" / "products.db"
-    DB_PATH = r"C:\Users\vikas.singh1\Desktop\hp-ai-deck-generator\backend\app\database\products.db"
+    DB_PATH = r"C:\Users\abhinav.pandey\Desktop\hp-ai-deck-generator\backend\app\database\products.db"
 
     # --------------------------------------------------------------------
     # Fetch all accessories from SQL DB
@@ -223,7 +228,7 @@ class SalesPitchAgent:
         {accessories}
         """
 
-        cat_output = self.llm(cat_prompt)
+        cat_output = self._ask_llm(cat_prompt)
 
         # -------------------------------
         # 3) Parse inferred categories
@@ -267,7 +272,7 @@ class SalesPitchAgent:
         5) Docking Station
         """
 
-        llm_output = self.llm(recommend_prompt)
+        llm_output = self._ask_llm(recommend_prompt)
 
         final_categories = []
         for line in llm_output.split("\n"):
@@ -299,7 +304,7 @@ class SalesPitchAgent:
         Keep the summary short and bullet-based.
         """
 
-        upsell_text = self.llm(summary_prompt)
+        upsell_text = self._ask_llm(summary_prompt)
 
         return {
             "text": upsell_text,
@@ -325,7 +330,7 @@ class SalesPitchAgent:
         - Make the pitch easy to read and persuasive
         - Keep it within 4–5 short lines maximum
         """
-        return self.llm(prompt)
+        return self._ask_llm(prompt)
 
 
 

@@ -33,10 +33,7 @@ os.makedirs(output_base, exist_ok=True)
 # Function: Parse file name → company, year, quarter
 # -------------------------------------------------
 def parse_filename(file):
-    """
-    Example: Microsoft_2025_Q4.pdf
-    Returns: company, year, quarter, base_name
-    """
+   
     base = os.path.basename(file).replace(".pdf", "")
     parts = base.split("_")
 
